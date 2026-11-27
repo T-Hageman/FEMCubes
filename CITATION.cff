@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use FEMCubes in your work, please cite it using the metadata below."
+type: software
+title: "FEMCubes: a modular multi-physics finite-element framework built on FEniCSx"
+authors:
+  - family-names: Hageman
+    given-names: Tim
+    affiliation: "Department of Engineering Science, University of Oxford"
+    orcid: "https://orcid.org/0000-0001-7770-7440"
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/T-Hageman/FEMCubes"
+url: "https://t-hageman.github.io/FEMCubes/"
+keywords:
+  - finite element method
+  - FEniCSx
+  - phase-field fracture
+  - viscoelasticity
+  - glaciology
+  - electrochemistry
+  - poromechanics

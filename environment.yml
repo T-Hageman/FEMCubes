@@ -1,0 +1,69 @@
+# Reproducible FEMCubes environment verified against the test suite.
+#
+# Create it with:
+#   conda env create -f environment.yml
+#   conda activate FenicsX
+#   python -m pip install --no-build-isolation -e .
+#
+# All libraries and Python build/test tools are pinned deliberately. Update a
+# pin only after running the full test suite and regenerating
+# environment.lock.yml from a clean environment.
+
+name: FenicsX
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Python and FEniCSx stack
+  - python=3.12.0
+  - fenics-dolfinx=0.10.0
+  - fenics-basix=0.10.0
+  - fenics-ufl=2025.2.0
+  - fenics-ffcx=0.10.0
+
+  # MPI/PETSc stack. Pinning MPICH avoids mixing incompatible MPI providers.
+  - mpi=1.0.1=mpich
+  - mpich=4.3.2
+  - mpi4py=4.1.1
+  # FEMCubes forms currently target real-valued PETSc scalars.
+  - petsc=3.24.1=real_*
+  - petsc4py=3.24.1
+
+  # Runtime numerics, meshing, and plotting
+  - numpy=2.3.4
+  - scipy=1.16.3
+  - numba=0.63.1
+  - threadpoolctl=3.6.0
+  # Parallel FEMCubes output uses HDF5's MPI driver; select the same MPICH
+  # variant as the rest of this environment rather than conda-forge's nompi build.
+  - h5py=3.15.1=mpi_mpich_*
+  - matplotlib-base=3.10.7
+  - pyvista=0.46.4
+  - vtk-base=9.5.2
+  - scikit-image=0.26.0
+
+  # C++ extension build toolchain
+  - cxx-compiler=1.11.0
+  # The verified machine uses system CMake 3.22.1. Conda's contemporary
+  # Python/Numba stack requires a newer zlib than that CMake build allows.
+  - cmake=3.31.6
+  - make=4.3
+  - eigen=5.0.1
+
+  # Python packaging and packages installed from PyPI in the verified setup
+  - pip=25.2
+  - pip:
+      - gmsh==4.15.0
+      # ffmpeg writer of imageio, used by PyVista to record the field movies
+      - imageio-ffmpeg==0.6.0
+      - pybind11==3.0.4
+      - scikit-build-core==0.12.2
+      # Derives the package version from the git tag at build time
+      - setuptools-scm==9.2.2
+      - pytest==9.0.2
+      - pytest-cov==7.0.0
+      - pytest-xdist==3.8.0
+      - sphinx==9.1.0
+      - pydata-sphinx-theme==0.17.0
+      - sphinx-autodoc-typehints==3.9.11
+      - sphinxcontrib-bibtex==2.7.0

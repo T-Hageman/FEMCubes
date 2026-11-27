@@ -1,0 +1,37 @@
+*.pyc
+.coverage
+Results/*
+.vscode/
+__pycache__/
+Results_*
+
+# Package / build artifacts
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Compiled Python C extensions (platform-specific build output)
+*.cpython-*.so
+
+# Pytest
+.pytest_cache/
+.coverage.*
+htmlcov/
+
+# Sphinx docs build output
+docs/_build/
+
+# Compiled technical notes (the LaTeX sources are tracked)
+docs/notes/*.pdf
+docs/notes/*.aux
+docs/notes/*.log
+docs/notes/*.out
+
+# Output of the example and benchmark scripts (copies for the docs live in docs/_static/)
+examples/**/results/
+benchmarks/results/
+
+# Output written when tests or examples are run from inside the package
+src/femcubes/Results/
+src/femcubes/examples/

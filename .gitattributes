@@ -1,0 +1,6 @@
+# Lets archives downloaded from GitHub report the right version (setuptools-scm)
+.git_archival.txt  export-subst
+
+# Development-only files, left out of release exports (git archive)
+CLAUDE.md  export-ignore
+drafts/**  export-ignore

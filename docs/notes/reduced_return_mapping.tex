@@ -1,0 +1,342 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=25mm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\bsig}{\bm{\sigma}}
+\newcommand{\beps}{\bm{\varepsilon}}
+\newcommand{\bfeta}{\bm{\eta}}
+\newcommand{\bG}{\bm{G}}
+\newcommand{\ihat}{\hat{\bm{\imath}}}
+\newcommand{\bn}{\bm{n}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\dev}{\operatorname{dev}}
+
+\title{A reduced return mapping for the cohesive visco-elastic model}
+\author{Technical note (FEMCubes, \texttt{Solid:Cohesive\_ViscoElastic})}
+\date{November 2026}
+
+\begin{document}
+\maketitle
+
+\section{Purpose}
+
+The cohesive visco-elastic model combines elasticity, power-law creep and fracture eigenstrains.
+At every integration point, the stress, the creep multiplier and the fracture multipliers follow
+from a small set of nonlinear equations, the local problem. The C++ kernel solves this problem
+in full tensor form (six stress components plus the multipliers) by a Newton method. In fracture
+simulations this local solve takes around 75--80\,\% of the run time.
+
+This note shows that the local problem only has two or three scalar unknowns. The material is
+isotropic, and all strain directions in the model are built from the volumetric and deviatoric
+parts of the strain. As a result, the stress, the creep strain and the fracture eigenstrain all
+lie in a plane spanned by two fixed directions. Most integration points then need no iteration
+at all, and the remaining points solve a system of two or three equations. This gives the same
+answer as the kernel, but at a cost of about $0.25$--$0.5\,\mu$s per point and call instead of
+$12$--$15\,\mu$s. The reference implementation is \texttt{src/femcubes/solids/\_reduced\_cve.py}.
+
+\section{The local problem}
+
+We use the notation of the model paper. Within a time increment $\Delta t$, the total strain
+$\beps$ and the creep strain of the previous step $\beps^v_\mathrm{old}$ are known, as is the
+degradation $d=d(\phi)\in[\kappa,1]$. The elastic strain is what remains after subtracting the
+creep strain and the fracture eigenstrain,
+\begin{equation}
+  \bsig = \mathbb{D}:\left(\beps-\beps^v_\mathrm{old}-\Delta\lambda_v\,\frac{\partial f_v}{\partial\bsig}-\bfeta\right),
+  \label{eq:stress}
+\end{equation}
+with $\mathbb{D}$ the isotropic elastic stiffness. The creep strain increment follows the
+power-law flow rule, written for the creep multiplier as
+\begin{equation}
+  \Delta\lambda_v = \Delta t\left(\frac{f_v(\bsig)}{\sigma_c}\right)^n,\qquad
+  f_v(\bsig)=\sqrt{\tfrac{n_d}{2}\,\bsig_\mathrm{dev}:\bsig_\mathrm{dev}},\qquad
+  \sigma_c=\left(\frac{n_d^{(n+1)/2}}{2A}\right)^{1/n},
+  \label{eq:creep}
+\end{equation}
+where $n_d$ is the number of dimensions ($n_d=2$ for the intrinsic two-dimensional model,
+$n_d=3$ otherwise) and $A$ and $n$ are the parameters of Glen's law. The fracture eigenstrain
+is built from one or two multipliers and their direction tensors,
+\begin{equation}
+  \bfeta=\sum_i\lambda_i\,\bG_i,\qquad \lambda_i\geq0 .
+\end{equation}
+For each multiplier, either the multiplier is zero, or the stress lies on the strength surface
+in its direction. With the drive
+\begin{equation}
+  r_i = \bG_i:\left(\frac{\partial F}{\partial\bfeta}-\bsig\right)+\zeta\,\lambda_i ,
+  \label{eq:drive}
+\end{equation}
+this reads $\lambda_i\geq0$, $r_i\geq0$ and $\lambda_i\,r_i=0$. Here $F$ is the total fracture
+potential (strength and interpenetration parts, scaled by $d$ where applicable) and $\zeta$ a
+small cohesive viscosity that the kernel adds for robustness ($\zeta=10^{-8}K\kappa$).
+
+The direction tensors are built from the strain that remains after creep,
+$\bm{s}=\beps-\beps^v_\mathrm{old}-\Delta\lambda_v\,\partial f_v/\partial\bsig$:
+\begin{itemize}
+  \item failure types with two multipliers (\texttt{r1}, \texttt{r1\_DP},
+    \texttt{r2\_2L}, \texttt{r2\_2L\_DP}) use $\bG_1=\pm\bm{I}/\sqrt{n_d}$ (sign of
+    $\tr\bm{s}$) and $\bG_2=\dev\bm{s}/\|\dev\bm{s}\|$;
+  \item failure types with one multiplier (\texttt{r2}, \texttt{r2\_DP}) use $\bG=\bm{s}/\|\bm{s}\|$ in tension and
+    $\bG=\dev\bm{s}/\|\dev\bm{s}\|$ in compression.
+\end{itemize}
+
+\section{Reduction to two strain invariants}
+
+We split the trial strain $\beps-\beps^v_\mathrm{old}$ into its volumetric and deviatoric parts,
+\begin{equation}
+  \beps-\beps^v_\mathrm{old}=e_v\,\ihat+e_q\,\bn,\qquad
+  \ihat=\frac{\bm{I}}{\sqrt{n_d}},\qquad
+  \bn=\frac{\dev(\beps-\beps^v_\mathrm{old})}{\|\dev(\beps-\beps^v_\mathrm{old})\|},
+\end{equation}
+so that $e_v=\ihat:(\beps-\beps^v_\mathrm{old})$ and $e_q\geq0$. Both $\ihat$ and $\bn$ have unit
+norm and are orthogonal. Suppose now that the stress lies in their plane,
+\begin{equation}
+  \bsig=a\,\ihat+b\,\bn .
+\end{equation}
+Then the creep direction is $\partial f_v/\partial\bsig=\gamma\,\bn$ (for $b>0$), with
+$\gamma=\sqrt{n_d/2}$, and $f_v=\gamma\,|b|$. The strain after creep becomes
+$\bm{s}=e_v\,\ihat+(e_q-\gamma\Delta\lambda_v)\,\bn$, which lies in the same plane. All direction
+tensors above are built from $\bm{s}$, so they also lie in this plane, and so does the
+eigenstrain,
+\begin{equation}
+  \bfeta=\eta_v\,\ihat+\eta_q\,\bn .
+\end{equation}
+The elastic stiffness maps $\ihat$ onto $k_v\,\ihat$ and $\bn$ onto $2\mu\,\bn$, with
+$k_v=n_dK$ ($K$ the $n_d$-dimensional bulk modulus, $k_v=n_d\lambda+2\mu$). Eq.~\eqref{eq:stress}
+therefore indeed gives a stress in the same plane:
+\begin{equation}
+  a=k_v\,(e_v-\eta_v),\qquad b=2\mu\,(e_q-\gamma\,\Delta\lambda_v-\eta_q).
+  \label{eq:ab}
+\end{equation}
+The assumed form is thus consistent, and since the local problem has a unique solution for the
+standard (associated) failure types, it is the solution. The full problem therefore reduces to
+the scalar unknowns $\Delta\lambda_v$ and $\lambda_1$ (and $\lambda_2$), with $(e_v,e_q)$, $d$
+and $\Delta t$ as the only inputs. The creep update becomes
+$\Delta\lambda_v=\Delta t\,(\gamma b/\sigma_c)^n$.
+
+In these coordinates, the trace and deviatoric norm of the eigenstrain are
+$\tr\bfeta=\sqrt{n_d}\,\eta_v$ and $\|\dev\bfeta\|=|\eta_q|$, and the projections of the stress
+on the directions are $\bsig:\bG_i=a\,G_{i,v}+b\,G_{i,q}$. The directions themselves become
+\begin{align}
+  &\text{two multipliers:} && \bG_1=(\pm1,\,0),\qquad \bG_2=(0,\,1),\\
+  &\text{one multiplier, tension:} && \bG=\frac{(e_v,\;e_q-\gamma\Delta\lambda_v)}{\sqrt{e_v^2+(e_q-\gamma\Delta\lambda_v)^2}},
+\end{align}
+written as (volumetric, deviatoric) components.
+It should be noted that the single-multiplier direction in tension depends on the creep
+multiplier. This couples the creep and fracture equations, which is why these types need the
+general solver of Section~\ref{sec:return} and not the closed-form route of
+Section~\ref{sec:r2}.
+
+\section{Fracture potentials in reduced form}
+
+Every failure potential of the model is a function of $\tr\bfeta$, $\|\dev\bfeta\|$ and, through
+its branches, of the trace of the strain after creep, $\tr\bm{s}=\sqrt{n_d}\,e_v$. In reduced
+form, the potentials are therefore functions $F(\eta_v,\eta_q;e_v,d)$. With
+\begin{equation}
+  F_1=\frac{f}{n_d}\tr\bfeta=\frac{f}{\sqrt{n_d}}\,\eta_v,\qquad
+  F_2=\frac{f_s}{\sqrt2}\,\|\dev\bfeta\|,
+\end{equation}
+where $f$ is $f_t$ or the calibrated $f^*$ of the split r2 criteria, Table~\ref{tab:F} lists the
+potentials as implemented in the kernel (\texttt{shared/fracture\_relations.h}). In compression
+($e_v<0$) a large penalty on $\tr\bfeta$ prevents interpenetration. For the Drucker--Prager
+variants, the deviatoric strength $f_s$ is replaced by a confined strength
+$q=\min(f_s-K\tan\phi\,\tr\bm{s},\,q_\mathrm{max})$ (\texttt{r2\_2L\_DP} uses the pressure
+$\max(-K\tr(\bm{s}-\bfeta),0)$ instead). The kernel regularises
+$\|\dev\bfeta\|$ as $\sqrt{\eta_q^2+10^{-20}}-10^{-10}$ and smooths the r2 norm with
+$\varepsilon=10^{-6}$; the reduced form keeps both, so the two implementations solve the same
+equations.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{>{\ttfamily}l l l}
+    \toprule
+    \textrm{FailureType} & tension ($e_v\geq0$) & compression ($e_v<0$) \\
+    \midrule
+    r1 & $d\,(F_1+F_2)$ & $-10^6F_1+d\,F_2$ \\
+    r2, r2\_2L, r2\_2L\_DP & $d\sqrt{F_1^{*2}+F_2^{*2}}$ & $-10^6F_1^*+d\,F_2^*$ \\
+    r2\_DP & $d\sqrt{F_1^2+F_2^2}$ & $-10^{12}F_1+d\,F_2\,q/f_s$ \\
+    r1\_DP & $d\,F_1+d\,F_2\,q/f_s$ & $-10^6F_1+d\,F_2\,q/f_s$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Fracture potentials $F$ in reduced form. $F^*$ uses the r2 calibration of the model
+  paper ($F_1^*=f_t^*\tr\bfeta$, $F_2^*=f_s^*\|\dev\bfeta\|$; the split types calibrate $f_t^*$
+  against uniaxial tension). For \texttt{r2\_2L\_DP}, $f_s^*$ is confined in compression; for
+  \texttt{r1\_DP}, $q$ takes its unconfined value $q_0=\max(f_s-f_t\tan\phi/3,0)$ when
+  $K\tr\bm{s}\geq f_t/3$.}
+  \label{tab:F}
+\end{table}
+
+With the gradient $F_{,v}=\partial F/\partial\eta_v$, $F_{,q}=\partial F/\partial\eta_q$, the
+drive \eqref{eq:drive} becomes
+\begin{equation}
+  r_i=G_{i,v}\,(F_{,v}-a)+G_{i,q}\,(F_{,q}-b)+\zeta\,\lambda_i .
+  \label{eq:drive_reduced}
+\end{equation}
+This is the full content of the fracture model in the reduced coordinates. Any other isotropic
+strength surface can be added by providing $F$, its first and second derivatives with respect to
+$(\eta_v,\eta_q)$, and the derivative of its gradient with respect to $e_v$ (for
+strain-dependent strengths).
+
+\section{The creep-only state}
+
+Most integration points do not crack. For these, $\bfeta=0$ and only creep remains. The
+deviatoric stress is then $b=2\mu\,(e_q-\gamma\Delta\lambda_v)$, and with
+$x=\gamma\Delta\lambda_v/e_q$ the creep update \eqref{eq:creep} becomes the scalar equation
+\begin{equation}
+  x=c\,(1-x)^n,\qquad
+  c=\frac{\gamma\,\Delta t}{e_q}\left(\frac{2\mu\,\gamma\,e_q}{\sigma_c}\right)^n .
+  \label{eq:creep_only}
+\end{equation}
+The right-hand side decreases with $x$ and the left-hand side increases, so there is exactly one
+root in $[0,1)$. This root depends on the single number $c$, the creep strain the trial stress
+would cause in one step, relative to $e_q$. We solve it once per creep exponent, by bisection to
+round-off, and tabulate $s=-\ln(1-x)$ against $\log_{10}c$ (cubic Hermite interpolation with
+exact derivatives, $10^{-30}\leq c\leq10^{14}$, $10^{-3}$ decades). Outside the table the
+asymptotes $s\approx c$ and $s\approx(\ln c)/n$ are used. The creep-only stress is then
+\begin{equation}
+  a^0=k_v\,e_v,\qquad b^0=2\mu\,e_q\,e^{-s},\qquad \Delta\lambda_v^0=\frac{e_q\,(1-e^{-s})}{\gamma},
+\end{equation}
+and its derivative with respect to $e_q$ follows from the tabulated $\mathrm{d}s/\mathrm{d}\log_{10}c$
+and $\mathrm{d}\log_{10}c/\mathrm{d}e_q=(n-1)/(e_q\ln10)$. No iteration is needed.
+
+\section{Which points crack}
+
+The fracture modes are tested at the creep-only state, as in the kernel. A mode is active when its
+drive \eqref{eq:drive_reduced}, evaluated at a small probe multiplier ($10^{-9}$), is negative
+(below $-10^{-6}\,d\max(f_t,f_s)$).
+
+For the split r2 criteria in tension, this probe is not a valid test. The admissible stresses of
+$F=d\sqrt{F_1^{*2}+F_2^{*2}}$ form an ellipse,
+\begin{equation}
+  \left(\frac{a}{d\,c_1}\right)^2+\left(\frac{b}{d\,c_2}\right)^2\leq1,\qquad
+  c_1=\sqrt{n_d}\,f_t^*,\qquad c_2=f_s^*,
+  \label{eq:ellipse}
+\end{equation}
+and a point cracks exactly when its creep-only stress lies outside this ellipse. Testing each mode
+separately misses points that are within both single-mode strengths but outside the ellipse.
+The probe drives, in turn, see the gradient of the smoothed norm along the probe direction and
+flag points inside the ellipse; the kernel then converges there to tiny ``regularised''
+multipliers of order $10^{-7}f_t/E$, which the sharp potential does not have. The reduced update
+therefore uses the ellipse test \eqref{eq:ellipse} alone in tension, and returns exactly zero
+multipliers inside the surface.
+
+Points without an active mode keep the creep-only state. For the associated failure types the
+local problem minimises a strictly convex incremental potential, so this test is exact.
+
+\section{The reduced return}
+\label{sec:return}
+
+Points with an active mode solve the reduced system for $\bm{u}=(\Delta\lambda_v,\lambda_1[,\lambda_2])$:
+\begin{equation}
+  R_0=\Delta\lambda_v-\Delta t\left(\frac{\gamma\langle b\rangle}{\sigma_c}\right)^n=0,\qquad
+  R_i=\varphi\!\left(2\mu\,\lambda_i,\;r_i\right)=0,
+  \label{eq:system}
+\end{equation}
+where $a$ and $b$ follow from Eq.~\eqref{eq:ab} and $\varphi(x,y)=\sqrt{x^2+y^2}-x-y$ is the
+Fischer--Burmeister function. It is zero exactly when $x\geq0$, $y\geq0$ and $x\,y=0$, so each
+$R_i=0$ states that either the multiplier is zero or the drive vanishes. The multiplier is scaled
+by $2\mu$ to give both arguments units of stress, as in the kernel.
+
+The system is solved by a semi-smooth Newton method with a backtracking line search on
+$\tfrac12\|(2\mu R_0,R_1,R_2)\|^2$, keeping the multipliers non-negative. It starts from the
+creep-only state, with the active multipliers estimated from one elastic step,
+$\lambda_i=-r_i^0/(k_vG_{i,v}^2+2\mu G_{i,q}^2)$. The Jacobian is available in closed form.
+With $\bm{H}$ the Hessian of $F$ with respect to $(\eta_v,\eta_q)$,
+$\bm{k}=\mathrm{diag}(k_v,2\mu)$ and $\bm{w}=(F_{,v}-a,\,F_{,q}-b)$,
+\begin{align}
+  \frac{\partial r_i}{\partial\lambda_j}&=\bG_i\cdot(\bm{H}+\bm{k})\,\bG_j+\zeta\,\delta_{ij},\\
+  \frac{\partial r_i}{\partial\Delta\lambda_v}&=\bG_i\cdot\left[(\bm{H}+\bm{k})\,\frac{\partial\bfeta}{\partial\Delta\lambda_v}+(0,\,2\mu\gamma)\right]+\bm{w}\cdot\frac{\partial\bG_i}{\partial\Delta\lambda_v},
+\end{align}
+where $\partial\bfeta/\partial\Delta\lambda_v=\sum_j\lambda_j\,\partial\bG_j/\partial\Delta\lambda_v$
+is non-zero only for the single-multiplier directions in tension. The creep row follows from
+$\partial b/\partial\lambda_j=-2\mu\,G_{j,q}$ and
+$\partial b/\partial\Delta\lambda_v=-2\mu\,(\gamma+\partial\eta_q/\partial\Delta\lambda_v)$.
+The system has two or three unknowns and is solved by Gaussian elimination. Newton converges
+quadratically, typically in three to six iterations, to a scaled residual of $10^{-12}$ of the
+stress scale.
+
+If the method does not converge (rare, and so far only seen in extreme states, with strains of
+tens of times the strength strain in nearly fully damaged material), the point is recomputed by
+the C++ kernel with the inputs the kernel would otherwise have received.
+
+\section{Consistent tangent}
+
+The stress depends on the strain through $(e_v,e_q)$ and through the direction $\bn$. The scalar
+part follows by implicit differentiation of the converged system \eqref{eq:system}: with
+$\bm{J}_u=\partial\bm{R}/\partial\bm{u}$ and $\bm{J}_e=\partial\bm{R}/\partial(e_v,e_q)$ at fixed
+$\bm{u}$,
+\begin{equation}
+  \frac{\mathrm{d}\bm{u}}{\mathrm{d}(e_v,e_q)}=-\bm{J}_u^{-1}\bm{J}_e,\qquad
+  \frac{\mathrm{d}a}{\mathrm{d}e_\alpha}=\frac{\partial a}{\partial e_\alpha}+\frac{\partial a}{\partial\bm{u}}\cdot\frac{\mathrm{d}\bm{u}}{\mathrm{d}e_\alpha},
+\end{equation}
+and likewise for $b$. At the converged state, the Fischer--Burmeister rows reduce to
+$\mathrm{d}r_i=0$ for active modes and $\mathrm{d}\lambda_i=0$ for inactive ones. Since
+$\mathrm{d}e_v/\mathrm{d}\beps=\ihat$, $\mathrm{d}e_q/\mathrm{d}\beps=\bn$ and
+$\mathrm{d}\bn/\mathrm{d}\beps=(\mathbb{P}_\mathrm{dev}-\bn\otimes\bn)/e_q$, the tangent is
+\begin{equation}
+  \frac{\mathrm{d}\bsig}{\mathrm{d}\beps}=
+  \ihat\otimes\left(\frac{\mathrm{d}a}{\mathrm{d}e_v}\ihat+\frac{\mathrm{d}a}{\mathrm{d}e_q}\bn\right)
+  +\bn\otimes\left(\frac{\mathrm{d}b}{\mathrm{d}e_v}\ihat+\frac{\mathrm{d}b}{\mathrm{d}e_q}\bn\right)
+  +\frac{b}{e_q}\left(\mathbb{P}_\mathrm{dev}-\bn\otimes\bn\right).
+\end{equation}
+The last term describes the rotation of the deviatoric direction with the strain; it is the
+elastic shear stiffness for creep-only points without creep. The tangent is the exact
+derivative of the update; it agrees with finite differences to about $10^{-7}$ of the elastic
+stiffness for every failure type.
+
+\section{Plane stress}
+
+In plane stress the out-of-plane strain $e_{zz}$ is an additional unknown, set by
+$\sigma_{zz}=0$. Since $\sigma_{zz}$ increases with $e_{zz}$, a safeguarded scalar Newton method
+is used per point: Newton steps with $\mathrm{d}\sigma_{zz}/\mathrm{d}e_{zz}$ from the tangent,
+inside a bracket of known signs, with bisection when a step leaves it. It starts from the elastic
+plane-stress strain, so elastic points need no iteration. Each evaluation is the reduced
+three-dimensional update above. The solved $e_{zz}$ is returned, and the tangent is condensed as
+in the kernel,
+\begin{equation}
+  \tilde{\mathbb{C}}=\mathbb{C}-\frac{(\mathbb{C}:\bm{e}_z\otimes\bm{e}_z)\otimes(\bm{e}_z\otimes\bm{e}_z:\mathbb{C})}{C_{zzzz}},
+\end{equation}
+with zero $zz$ row and column.
+
+\section{The split r2 criterion as a single angle}
+\label{sec:r2}
+
+For \texttt{r2\_2L} the return has an even simpler structure. When a point returns in tension,
+the stress lands on the ellipse
+\eqref{eq:ellipse}, so it can be written with one angle,
+\begin{equation}
+  (a,b)=d\,(c_1\cos\theta,\;c_2\sin\theta)
+\end{equation}
+(corrected for the small cohesive viscosity). The creep follows from $b$, and the angle is fixed
+by normality: the return vector, from the trial stress (with the creep of the returned stress)
+to $(a,b)$, must be parallel to the outward normal of the ellipse in the energy metric,
+\begin{equation}
+  \bm{v}(\theta)=\left(\frac{k_v\cos\theta}{c_1},\;\frac{2\mu\sin\theta}{c_2}\right).
+\end{equation}
+Their cross product $R(\theta)$ is negative at
+$\theta=0$ and positive at $\theta=\pi/2$, so a bracketed scalar Newton method finds the angle in
+about five iterations. The general solver of Section~\ref{sec:return} gives the same result.
+
+\section{Accuracy and cost}
+
+The reduced update was compared with the C++ kernel at random states (strains from $0.1$ to
+$30$ times the strength strain, damage down to $10^{-3}$) for every failure type, in intrinsic
+two dimensions, three dimensions and plane stress. The stress agrees to the kernel's tolerance.
+Where the two differ, at strongly damaged points with large openings, the kernel's accepted
+states are the less accurate ones: they violate the creep equation \eqref{eq:creep}, or, in plane
+stress, the kernel's own three-dimensional response at the same strain. The reduced update
+satisfies both to round-off.
+
+In coupled simulations (fine plate with hole, \texttt{r2\_2L}), the reduced update reproduces the
+kernel's load--displacement response to about $10^{-7}$ of the peak force, with the same time
+steps, failed steps and crack. It costs $0.24\,\mu$s per point and call in two dimensions and
+$0.47\,\mu$s in plane stress, against $11.5$--$15\,\mu$s for the kernel. The run times drop by
+factors of $5.6$ (intrinsic two dimensions), $6.4$ (plane strain) and $6.7$ (plane stress); the
+remaining time is mostly the linear solves. On a coarser plate, the other failure types that
+crack in this test (\texttt{r1}, \texttt{r1\_DP}, \texttt{r2}, \texttt{r2\_DP},
+\texttt{r2\_2L\_DP}) also reproduce the kernel, with the same time steps, failed steps and crack
+length and a load--displacement response within $3\cdot10^{-7}$ of the peak force.
+
+\end{document}
